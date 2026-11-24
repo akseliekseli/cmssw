@@ -14,7 +14,7 @@
               Column names are kept identical to the JetNTuplizer branch names
               for a 1:1 mapping. Variable-length per-jet candidate arrays are
               stored in a flattened sibling table (rows = candidates, column
-              "jetIdx" = index of the parent jet in the "L1JetTrain" table);
+              "jetIdx" = index of the parent jet in the training jet table);
               the per-jet counts are in column "jet_npuppicand" /
               "njet_puppicand_off" of the jet table.
 
@@ -26,6 +26,9 @@
 */
 
 #include <memory>
+#include "DPGAnalysis/Phase2L1TNanoAOD/interface/FatJetMatching.h"
+#include "FWCore/Utilities/interface/Exception.h"
+#include <map>
 #include <vector>
 #include <algorithm>
 #include <cmath>
@@ -135,6 +138,11 @@ private:
   const edm::EDGetTokenT<std::vector<pat::Jet>> offlineJetsToken_;
   const edm::EDGetTokenT<std::vector<reco::Vertex>> offlinePVsToken_;
   const bool doOfflineInfo_;
+  const std::string tableName_;
+  const bool writeGenTables_;
+  std::map<std::string, int> truthCodes_;
+  std::string truthDoc_;
+  edm::EDGetTokenT<reco::GenParticleRefVector> bHadrons_, cHadrons_;
 
   // thresholds, identical to JetNTuplizer
   const float dRJetGenMatch_ = 0.4;
@@ -162,13 +170,28 @@ L1JetTrainingTableProducer::L1JetTrainingTableProducer(const edm::ParameterSet& 
       bjetidsToken_(consumes<edm::ValueMap<float>>(iConfig.getParameter<edm::InputTag>("bjetIDs"))),
       offlineJetsToken_(consumes<std::vector<pat::Jet>>(iConfig.getParameter<edm::InputTag>("offlineJets"))),
       offlinePVsToken_(consumes<std::vector<reco::Vertex>>(iConfig.getParameter<edm::InputTag>("offlinePVs"))),
-      doOfflineInfo_(iConfig.getParameter<bool>("doOfflineInfo")) {
-  produces<nanoaod::FlatTable>("L1JetTrain");
-  produces<nanoaod::FlatTable>("L1JetTrainCand");
+      doOfflineInfo_(iConfig.getParameter<bool>("doOfflineInfo")),
+      tableName_(iConfig.getParameter<std::string>("tableName")),
+      writeGenTables_(iConfig.getParameter<bool>("writeGenTables")) {
+  const auto labels = iConfig.getParameter<std::vector<std::string>>("sc8Labels");
+  for (const auto& label : labels) {
+    const int code = truthCodes_.size();
+    if (!truthCodes_.emplace(label, code).second)
+      throw cms::Exception("Configuration") << "Duplicate SC8 label " << label;
+    truthDoc_ += std::to_string(code) + "=" + label + " ";
+  }
+  if (!labels.empty()) {
+    bHadrons_ = consumes<reco::GenParticleRefVector>(iConfig.getParameter<edm::InputTag>("labelBHadrons"));
+    cHadrons_ = consumes<reco::GenParticleRefVector>(iConfig.getParameter<edm::InputTag>("labelCHadrons"));
+  }
+  produces<nanoaod::FlatTable>(tableName_);
+  produces<nanoaod::FlatTable>(tableName_ + "Cand");
   if (doOfflineInfo_)
-    produces<nanoaod::FlatTable>("L1JetTrainOffCand");
-  produces<nanoaod::FlatTable>("L1GenH");
-  produces<nanoaod::FlatTable>("L1GenEvent");
+    produces<nanoaod::FlatTable>(tableName_ + "OffCand");
+  if (writeGenTables_) {
+    produces<nanoaod::FlatTable>("L1GenH");
+    produces<nanoaod::FlatTable>("L1GenEvent");
+  }
 }
 
 l1jettraintools::GenEventInfo L1JetTrainingTableProducer::fillGenInfo(
@@ -1018,7 +1041,46 @@ void L1JetTrainingTableProducer::produce(edm::Event& iEvent, const edm::EventSet
   }  // end loop over jets
 
   // ============ build FlatTables ============
-  auto jetTab = std::make_unique<nanoaod::FlatTable>(jetv_l1.size(), "L1JetTrain", false);
+  auto jetTab = std::make_unique<nanoaod::FlatTable>(jetv_l1.size(), tableName_, false);
+  if (!truthCodes_.empty()) {
+    std::vector<int> codes, nB, nC;
+    edm::Handle<reco::GenParticleRefVector> b, c;
+    if (isMC) {
+      iEvent.getByToken(bHadrons_, b);
+      iEvent.getByToken(cHadrons_, c);
+    }
+    constexpr double radius = 0.8;
+    for (const auto& jet : jetv_l1) {
+      int nb = -1, nc = -1;
+      std::string label = "Data";
+      if (isMC) {
+        const auto count = [&](const reco::GenParticleRefVector& hadrons) {
+          int n = 0;
+          for (const auto& h : hadrons) {
+            if (h.isNull() || !h.isAvailable())
+              throw cms::Exception("InvalidReference") << "Unavailable selected heavy hadron";
+            if (reco::deltaR(h->p4(), jet->p4()) < radius)
+              ++n;
+          }
+          return n;
+        };
+        nb = count(*b);
+        nc = count(*c);
+        deepntuples::FatJetMatching matcher(radius, true);
+        matcher.flavorLabel(jet.get(), *genparticles, radius, nb, nc);
+        label = matcher.getResult().label;
+      }
+      const auto found = truthCodes_.find(label);
+      if (found == truthCodes_.end())
+        throw cms::Exception("UnknownSC8Label") << label;
+      codes.push_back(found->second);
+      nB.push_back(nb);
+      nC.push_back(nc);
+    }
+    jetTab->addColumn<int>("sc8_label", codes, truthDoc_);
+    jetTab->addColumn<int>("nBHadrons", nB, "Selected b hadrons within deltaR < 0.8");
+    jetTab->addColumn<int>("nCHadrons", nC, "Selected c hadrons within deltaR < 0.8");
+  }
   auto addF = [&jetTab](const std::string& name, const std::vector<float>& v, const std::string& doc) {
     jetTab->addColumn<float>(name, v, doc);
   };
@@ -1081,7 +1143,7 @@ void L1JetTrainingTableProducer::produce(edm::Event& iEvent, const edm::EventSet
   addI("jet_genmatch_pflav", v_jet_genmatch_pflav, "parton flavour of matched gen jet");
   addF("jet_jecmatch_dR", v_jet_jecmatch_dR, "dR to matched corrected (JEC) jet, 999 if none");
   addF("jet_pt_corr", v_jet_pt_corr, "pt of matched corrected jet, -1 if none");
-  addI("jet_npuppicand", v_jet_npuppicand, "number of puppi candidates of this jet (see L1JetTrainCand table)");
+  addI("jet_npuppicand", v_jet_npuppicand, "number of puppi candidates of this jet (see " + tableName_ + "Cand table)");
   if (doOfflineInfo_) {
     addF("jet_offline_pt", v_jet_offline_pt, "matched offline jet pt (-999 if none)");
     addU32("jet_offline_hflav", v_jet_offline_hflav, "hadron flavour of matched offline jet");
@@ -1110,13 +1172,13 @@ void L1JetTrainingTableProducer::produce(edm::Event& iEvent, const edm::EventSet
     addF("jet_offline_btag_pnetForward_probg", v_jet_offline_btag_pnetForward_probg, "PNet forward probg");
     addI("njet_puppicand_off", v_njet_puppicand_off, "number of offline candidates (see L1JetTrainOffCand table)");
   }
-  iEvent.put(std::move(jetTab), "L1JetTrain");
+  iEvent.put(std::move(jetTab), tableName_);
 
-  auto candTab = std::make_unique<nanoaod::FlatTable>(c_jetIdx.size(), "L1JetTrainCand", false);
+  auto candTab = std::make_unique<nanoaod::FlatTable>(c_jetIdx.size(), tableName_ + "Cand", false);
   auto addFC = [&candTab](const std::string& name, const std::vector<float>& v, const std::string& doc) {
     candTab->addColumn<float>(name, v, doc);
   };
-  candTab->addColumn<int32_t>("jetIdx", c_jetIdx, "index of parent jet in L1JetTrain table");
+  candTab->addColumn<int32_t>("jetIdx", c_jetIdx, "index of parent jet in " + tableName_ + " table");
   addFC("jet_puppicand_pt", c_pt, "puppi candidate hw pt");
   addFC("jet_puppicand_eta", c_eta, "puppi candidate hw eta");
   addFC("jet_puppicand_phi", c_phi, "puppi candidate hw phi");
@@ -1144,14 +1206,14 @@ void L1JetTrainingTableProducer::produce(edm::Event& iEvent, const edm::EventSet
   addFC("jet_puppicand_id", c_id, "hwId bits");
   addFC("jet_puppicand_eta_phys", c_eta_phys, "physical cand eta");
   addFC("jet_puppicand_phi_phys", c_phi_phys, "physical cand phi");
-  iEvent.put(std::move(candTab), "L1JetTrainCand");
+  iEvent.put(std::move(candTab), tableName_ + "Cand");
 
   if (doOfflineInfo_) {
-    auto offTab = std::make_unique<nanoaod::FlatTable>(oc_jetIdx.size(), "L1JetTrainOffCand", false);
+    auto offTab = std::make_unique<nanoaod::FlatTable>(oc_jetIdx.size(), tableName_ + "OffCand", false);
     auto addFO = [&offTab](const std::string& name, const std::vector<float>& v, const std::string& doc) {
       offTab->addColumn<float>(name, v, doc);
     };
-    offTab->addColumn<int32_t>("jetIdx", oc_jetIdx, "index of parent jet in L1JetTrain table");
+    offTab->addColumn<int32_t>("jetIdx", oc_jetIdx, "index of parent jet in " + tableName_ + " table");
     addFO("jet_offline_puppicand_pt", oc_pt, "offline cand pt");
     addFO("jet_offline_puppicand_pt_log", oc_pt_log, "log(offline cand pt)");
     addFO("jet_offline_puppicand_pt_rel", oc_pt_rel, "offline cand pt / jet pt");
@@ -1182,8 +1244,11 @@ void L1JetTrainingTableProducer::produce(edm::Event& iEvent, const edm::EventSet
     addFO("jet_offline_puppicand_isHadronPlus", oc_isHadronPlus, "charged hadron, q>0");
     addFO("jet_offline_puppicand_isHadronMinus", oc_isHadronMinus, "charged hadron, q<0");
     addFO("jet_offline_puppicand_isNeutralHadron", oc_isNeutralHadron, "neutral non-photon");
-    iEvent.put(std::move(offTab), "L1JetTrainOffCand");
+    iEvent.put(std::move(offTab), tableName_ + "OffCand");
   }
+
+  if (!writeGenTables_)
+    return;
 
   auto genHTab = std::make_unique<nanoaod::FlatTable>(geninfo.genH_pt.size(), "L1GenH", false);
   genHTab->addColumn<float>("genH_pt", geninfo.genH_pt, "last-copy Higgs pt (== JetNTuplizer genH_pt)");
@@ -1213,6 +1278,11 @@ void L1JetTrainingTableProducer::fillDescriptions(edm::ConfigurationDescriptions
   desc.add<edm::InputTag>("bjetIDs", edm::InputTag("l1tBJetProducerTrain", "L1PFBJets"));
   desc.add<edm::InputTag>("offlineJets", edm::InputTag("slimmedJetsPuppi"));
   desc.add<edm::InputTag>("offlinePVs", edm::InputTag("offlineSlimmedPrimaryVertices"));
+  desc.add<std::string>("tableName", "L1JetTrain");
+  desc.add<bool>("writeGenTables", true);
+  desc.add<std::vector<std::string>>("sc8Labels", std::vector<std::string>{});
+  desc.add<edm::InputTag>("labelBHadrons", edm::InputTag("selectedHadronsAndPartons", "bHadrons"));
+  desc.add<edm::InputTag>("labelCHadrons", edm::InputTag("selectedHadronsAndPartons", "cHadrons"));
   desc.add<bool>("doOfflineInfo", true);
   descriptions.addWithDefaultLabel(desc);
 }

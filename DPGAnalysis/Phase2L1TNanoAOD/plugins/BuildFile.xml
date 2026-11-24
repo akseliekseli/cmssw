@@ -8,6 +8,7 @@
 <use name="DataFormats/L1TMuonPhase2"/>
 <use name="DataFormats/L1TParticleFlow"/>
 <use name="DataFormats/NanoAOD"/>
+<use name="DataFormats/Math"/>
 <use name="DataFormats/PatCandidates"/>
 <use name="DataFormats/HepMCCandidate"/>
 <use name="DataFormats/JetReco"/>

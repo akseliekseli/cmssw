@@ -102,3 +102,77 @@ def addL1JetTrainingTables(process):
     if hasattr(process, "l1tNNTauProducerPuppi"):
         process.l1tNNTauProducerPuppi.maxtaus = cms.int32(500)
     return process
+
+
+def addSC8JetTrainingTables(process):
+    """Add FastPUPPI extended SC8 training jets alongside the existing tables."""
+    process.sc8TrainSeeds = process.l1tSC4PFL1PuppiExtendedEmulator.clone(
+        coneSize=0.8, wideConeJet=True,
+    )
+    process.sc8TrainNGJets = process.l1tSC4NGJetTrainProducer.clone(jets="sc8TrainSeeds")
+    jets = cms.InputTag("sc8TrainNGJets", "l1tSC4NGJets")
+    process.sc8TrainBTags = process.l1tBJetProducerTrain.clone(jets=jets)
+    # Index in this list is the stored truth code. Append future labels at the end.
+    # The full decoding is also written into the ROOT branch title.
+    process.sc8TrainTable = process.l1JetTrainTable.clone(
+        tableName=cms.string("L1JetTrainSC8"),
+        writeGenTables=cms.bool(False),
+        scPuppiJets=jets,
+        scPuppiJetsCorr="l1tSC8PFL1PuppiCorrectedEmulator",
+        bjetIDs=("sc8TrainBTags", "L1PFBJets"),
+        sc8Labels=cms.vstring(
+            "QCD_others", "H_bb", "H_cc", "H_qq",
+            "H_gg", "Cust_btaue", "Cust_btauh", "Cust_btaum",
+            "Cust_ctaue", "Cust_ctauh", "Cust_ctaum", "Cust_gtaue",
+            "Cust_gtauh", "Cust_gtaum", "Cust_qtaue", "Cust_qtauh",
+            "Cust_qtaum", "Cust_staue", "Cust_stauh", "Cust_staum",
+            "Cust_taue", "Cust_tauh", "Cust_taum", "Data",
+            "H_HVext_aab", "H_HVext_aabb", "H_HVext_aabc", "H_HVext_aabq",
+            "H_HVext_aac", "H_HVext_aacc", "H_HVext_aacq", "H_HVext_aacs",
+            "H_HVext_aae", "H_HVext_aaee", "H_HVext_aag", "H_HVext_aagg",
+            "H_HVext_aam", "H_HVext_aamm", "H_HVext_aaq", "H_HVext_aaqq",
+            "H_HVext_aas", "H_HVext_aasq", "H_HVext_aass", "H_HVext_aataue",
+            "H_HVext_aatauh", "H_HVext_aatauhtaue", "H_HVext_aatauhtauh", "H_HVext_aatauhtaum",
+            "H_HVext_aataum", "H_HVext_abb", "H_HVext_abc", "H_HVext_abq",
+            "H_HVext_acc", "H_HVext_acq", "H_HVext_acs", "H_HVext_aee",
+            "H_HVext_agg", "H_HVext_amm", "H_HVext_aqq", "H_HVext_asq",
+            "H_HVext_ass", "H_HVext_atauhtaue", "H_HVext_atauhtauh", "H_HVext_atauhtaum",
+            "H_WW_csc", "H_WW_cscs", "H_WW_csev", "H_WW_csmv",
+            "H_WW_csq", "H_WW_csqq", "H_WW_css", "H_WW_cstauev",
+            "H_WW_cstauhv", "H_WW_cstaumv", "H_WW_qqc", "H_WW_qqev",
+            "H_WW_qqmv", "H_WW_qqq", "H_WW_qqqq", "H_WW_qqs",
+            "H_WW_qqtauev", "H_WW_qqtauhv", "H_WW_qqtaumv", "H_ZZ_bbb",
+            "H_ZZ_bbbb", "H_ZZ_bbc", "H_ZZ_bbcc", "H_ZZ_bbe",
+            "H_ZZ_bbee", "H_ZZ_bbm", "H_ZZ_bbmm", "H_ZZ_bbq",
+            "H_ZZ_bbqq", "H_ZZ_bbs", "H_ZZ_bbss", "H_ZZ_bbtauhtaue",
+            "H_ZZ_bbtauhtauh", "H_ZZ_bbtauhtaum", "H_ZZ_bee", "H_ZZ_bmm",
+            "H_ZZ_btauhtaue", "H_ZZ_btauhtauh", "H_ZZ_btauhtaum", "H_ZZ_ccb",
+            "H_ZZ_ccc", "H_ZZ_cccc", "H_ZZ_cce", "H_ZZ_ccee",
+            "H_ZZ_ccm", "H_ZZ_ccmm", "H_ZZ_ccq", "H_ZZ_ccqq",
+            "H_ZZ_ccs", "H_ZZ_ccss", "H_ZZ_cctauhtaue", "H_ZZ_cctauhtauh",
+            "H_ZZ_cctauhtaum", "H_ZZ_cee", "H_ZZ_cmm", "H_ZZ_ctauhtaue",
+            "H_ZZ_ctauhtauh", "H_ZZ_ctauhtaum", "H_ZZ_qee", "H_ZZ_qmm",
+            "H_ZZ_qqb", "H_ZZ_qqc", "H_ZZ_qqe", "H_ZZ_qqee",
+            "H_ZZ_qqm", "H_ZZ_qqmm", "H_ZZ_qqq", "H_ZZ_qqqq",
+            "H_ZZ_qqs", "H_ZZ_qqtauhtaue", "H_ZZ_qqtauhtauh", "H_ZZ_qqtauhtaum",
+            "H_ZZ_qtauhtaue", "H_ZZ_qtauhtauh", "H_ZZ_qtauhtaum", "H_ZZ_see",
+            "H_ZZ_smm", "H_ZZ_ssb", "H_ZZ_ssc", "H_ZZ_sse",
+            "H_ZZ_ssee", "H_ZZ_ssm", "H_ZZ_ssmm", "H_ZZ_ssq",
+            "H_ZZ_ssqq", "H_ZZ_sss", "H_ZZ_ssss", "H_ZZ_sstauhtaue",
+            "H_ZZ_sstauhtauh", "H_ZZ_sstauhtaum", "H_ZZ_stauhtaue", "H_ZZ_stauhtauh",
+            "H_ZZ_stauhtaum", "H_bc", "H_bs", "H_cs",
+            "H_ee", "H_mm", "H_ss", "H_tauhtaue",
+            "H_tauhtauh", "H_tauhtaum", "Hext_aa", "Invalid",
+            "QCD_b", "QCD_bb", "QCD_c", "QCD_cc",
+            "Top_Wcs", "Top_Wev", "Top_Wmv", "Top_Wqq",
+            "Top_Wtauev", "Top_Wtauhv", "Top_Wtaumv", "Top_bWc",
+            "Top_bWcs", "Top_bWev", "Top_bWmv", "Top_bWq",
+            "Top_bWqq", "Top_bWs", "Top_bWtauev", "Top_bWtauhv",
+            "Top_bWtaumv", "W_cs", "W_ev", "W_mv",
+            "W_qq", "W_tauev", "W_tauhv", "W_taumv",
+            "Z_bb", "Z_cc", "Z_qq", "Z_ss",
+        ),
+    )
+    process.l1tPh2NanoTask.add(process.sc8TrainSeeds, process.sc8TrainNGJets,
+                               process.sc8TrainBTags, process.sc8TrainTable)
+    return process
